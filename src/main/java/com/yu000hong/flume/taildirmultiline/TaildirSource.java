@@ -17,7 +17,20 @@
 
 package com.yu000hong.flume.taildirmultiline;
 
-import static com.yu000hong.flume.taildirmultiline.TaildirSourceConfigurationConstants.*;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.*;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.google.gson.Gson;
+import org.apache.commons.lang.StringUtils;
+import org.apache.flume.*;
+import org.apache.flume.conf.BatchSizeSupported;
+import org.apache.flume.conf.Configurable;
+import org.apache.flume.instrumentation.SourceCounter;
+import org.apache.flume.source.AbstractSource;
+import org.apache.flume.source.PollableSourceConstants;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -28,34 +41,9 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
-import org.apache.flume.ChannelException;
-import org.apache.flume.Context;
-import org.apache.flume.Event;
-import org.apache.flume.FlumeException;
-import org.apache.flume.PollableSource;
-import org.apache.flume.conf.BatchSizeSupported;
-import org.apache.flume.conf.Configurable;
-import org.apache.flume.instrumentation.SourceCounter;
-import org.apache.flume.source.AbstractSource;
-import org.apache.flume.source.PollableSourceConstants;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Table;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import com.google.gson.Gson;
+import static com.yu000hong.flume.taildirmultiline.TaildirSourceConfigurationConstants.*;
 
 public class TaildirSource extends AbstractSource implements
         PollableSource, Configurable, BatchSizeSupported {
@@ -88,6 +76,7 @@ public class TaildirSource extends AbstractSource implements
     private boolean fileHeader;
     private String fileHeaderKey;
     private Long maxBatchCount;
+    private String prefixRegex;
 
     @Override
     public synchronized void start() {
@@ -102,6 +91,7 @@ public class TaildirSource extends AbstractSource implements
                     .cachePatternMatching(cachePatternMatching)
                     .annotateFileName(fileHeader)
                     .fileNameHeader(fileHeaderKey)
+                    .prefixRegex(prefixRegex)
                     .build();
         } catch (IOException e) {
             throw new FlumeException("Error instantiating ReliableTaildirEventReader", e);
@@ -191,6 +181,17 @@ public class TaildirSource extends AbstractSource implements
             maxBatchCount = DEFAULT_MAX_BATCH_COUNT;
             logger.warn("Invalid maxBatchCount specified, initializing source "
                     + "default maxBatchCount of {}", maxBatchCount);
+        }
+        prefixRegex = context.getString(PREFIX_REGEX, DEFAULT_PREFIX_REGEX);
+        if (prefixRegex != null) {
+            if (StringUtils.isBlank(prefixRegex)) {
+                prefixRegex = null;
+            } else {
+                prefixRegex = prefixRegex.trim();
+                if (!prefixRegex.startsWith("^")) {
+                    prefixRegex = "^" + prefixRegex;
+                }
+            }
         }
 
         if (sourceCounter == null) {
@@ -292,7 +293,7 @@ public class TaildirSource extends AbstractSource implements
                 return false;
             }
             if (++batchCount >= maxBatchCount) {
-                logger.debug("The batches read from the same file is larger than " + maxBatchCount );
+                logger.debug("The batches read from the same file is larger than " + maxBatchCount);
                 return true;
             }
         }

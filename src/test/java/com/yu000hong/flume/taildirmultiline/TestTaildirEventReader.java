@@ -21,11 +21,7 @@ package com.yu000hong.flume.taildirmultiline;
 
 import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
-import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
-import com.google.common.collect.Table;
+import com.google.common.collect.*;
 import com.google.common.io.Files;
 import org.apache.flume.Event;
 import org.junit.After;
@@ -39,9 +35,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.yu000hong.flume.taildirmultiline.TaildirSourceConfigurationConstants.BYTE_OFFSET_HEADER_KEY;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 public class TestTaildirEventReader {
     private File tmpDir;
@@ -67,9 +61,9 @@ public class TestTaildirEventReader {
         return headers;
     }
 
-    private ReliableTaildirEventReader getReader(Map<String, String> filePaths,
-                                                 Table<String, String, String> headerTable, boolean addByteOffset,
-                                                 boolean cachedPatternMatching) {
+    private ReliableTaildirEventReader getReader(
+            Map<String, String> filePaths, Table<String, String, String> headerTable,
+            boolean addByteOffset, boolean cachedPatternMatching, String prefixRegex) {
         ReliableTaildirEventReader reader;
         try {
             reader = new ReliableTaildirEventReader.Builder()
@@ -79,6 +73,7 @@ public class TestTaildirEventReader {
                     .skipToEnd(false)
                     .addByteOffset(addByteOffset)
                     .cachePatternMatching(cachedPatternMatching)
+                    .prefixRegex(prefixRegex)
                     .build();
             reader.updateTailFiles();
         } catch (IOException ioe) {
@@ -88,15 +83,25 @@ public class TestTaildirEventReader {
     }
 
     private ReliableTaildirEventReader getReader(boolean addByteOffset,
-                                                 boolean cachedPatternMatching) {
+                                                 boolean cachedPatternMatching,
+                                                 String prefixRegex) {
         Map<String, String> filePaths = ImmutableMap.of("testFiles",
                 tmpDir.getAbsolutePath() + "/file.*");
         Table<String, String, String> headerTable = HashBasedTable.create();
-        return getReader(filePaths, headerTable, addByteOffset, cachedPatternMatching);
+        return getReader(filePaths, headerTable, addByteOffset, cachedPatternMatching, prefixRegex);
+    }
+
+    private ReliableTaildirEventReader getReader(boolean addByteOffset,
+                                                 boolean cachedPatternMatching) {
+        return getReader(addByteOffset, cachedPatternMatching, null);
+    }
+
+    private ReliableTaildirEventReader getReader(String prefixRegex) {
+        return getReader(false, false, prefixRegex);
     }
 
     private ReliableTaildirEventReader getReader() {
-        return getReader(false, false);
+        return getReader(false, false, null);
     }
 
     @Before
@@ -334,6 +339,37 @@ public class TestTaildirEventReader {
         reader.commit();
         assertEquals(4, out.size());
         assertTrue(out.contains("file1line4"));
+    }
+
+    @Test
+    public void testPrefixRegex() throws IOException {
+        File f1 = new File(tmpDir, "file1");
+        Files.write("[2020]file1line1\n  line2\n[2021]line3", f1, Charsets.UTF_8);
+
+        ReliableTaildirEventReader reader = getReader("\\[");
+        List<String> out = Lists.newArrayList();
+        // Expect to read only the line with newline
+        for (TailFile tf : reader.getTailFiles().values()) {
+            out.addAll(bodiesAsStrings(reader.readEvents(tf, 5)));
+            reader.commit();
+        }
+        assertEquals(1, out.size());
+        assertTrue(out.contains("[2020]file1line1\n  line2"));
+
+        Files.append("-line3-\nfile1line4\n[2022]file1line5", f1, Charsets.UTF_8);
+
+        for (TailFile tf : reader.getTailFiles().values()) {
+            out.addAll(bodiesAsStrings(reader.readEvents(tf, 5)));
+            reader.commit();
+        }
+        assertEquals(2, out.size());
+        assertTrue(out.contains("[2021]line3-line3-\nfile1line4"));
+
+        // Should read the last line if it finally has no newline
+        out.addAll(bodiesAsStrings(reader.readEvents(5, false)));
+        reader.commit();
+        assertEquals(3, out.size());
+        assertTrue(out.contains("[2022]file1line5"));
     }
 
     @Test

@@ -28,8 +28,11 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static com.yu000hong.flume.taildirmultiline.TaildirSourceConfigurationConstants.BYTE_OFFSET_HEADER_KEY;
 
@@ -53,8 +56,14 @@ public class TailFile {
     private byte[] oldBuffer;
     private int bufferPos;
     private long lineReadPos;
+    private LineBuffer lineBuffer;
 
     public TailFile(File file, Map<String, String> headers, long inode, long pos)
+            throws IOException {
+        this(file, headers, inode, pos, null);
+    }
+
+    public TailFile(File file, Map<String, String> headers, long inode, long pos, String prefixRegex)
             throws IOException {
         this.raf = new RandomAccessFile(file, "r");
         if (pos > 0) {
@@ -69,6 +78,7 @@ public class TailFile {
         this.headers = headers;
         this.oldBuffer = new byte[0];
         this.bufferPos = NEED_READING;
+        this.lineBuffer = new LineBuffer(prefixRegex);
     }
 
     public RandomAccessFile getRaf() {
@@ -128,11 +138,13 @@ public class TailFile {
         }
         return false;
     }
+
     public void updateFilePos(long pos) throws IOException {
         raf.seek(pos);
         lineReadPos = pos;
         bufferPos = NEED_READING;
         oldBuffer = new byte[0];
+        lineBuffer.reset();
     }
 
 
@@ -150,21 +162,14 @@ public class TailFile {
     }
 
     private Event readEvent(boolean backoffWithoutNL, boolean addByteOffset) throws IOException {
-        Long posTmp = getLineReadPos();
-        LineResult line = readLine();
-        if (line == null) {
-            return null;
-        }
-        if (backoffWithoutNL && !line.lineSepInclude) {
-            logger.info("Backing off in file without newline: "
-                    + path + ", inode: " + inode + ", pos: " + raf.getFilePointer());
-            updateFilePos(posTmp);
-            return null;
-        }
-        Event event = EventBuilder.withBody(line.line);
-        if (addByteOffset == true) {
-            event.getHeaders().put(BYTE_OFFSET_HEADER_KEY, posTmp.toString());
-        }
+        lineBuffer.setBackoffWithoutNL(backoffWithoutNL);
+        lineBuffer.setAddByteOffset(addByteOffset);
+        LineResult line;
+        Event event;
+        do {
+            line = readLine();
+            event = lineBuffer.append(line);
+        } while (event == null && line != null);
         return event;
     }
 
@@ -194,7 +199,7 @@ public class TailFile {
                     readFile();
                 } else {
                     if (oldBuffer.length > 0) {
-                        lineResult = new LineResult(false, oldBuffer);
+                        lineResult = new LineResult(false, oldBuffer, lineReadPos);
                         oldBuffer = new byte[0];
                         setLineReadPos(lineReadPos + lineResult.line.length);
                     }
@@ -213,7 +218,7 @@ public class TailFile {
                         oldLen -= 1;
                     }
                     lineResult = new LineResult(true,
-                            concatByteArrays(oldBuffer, 0, oldLen, buffer, bufferPos, lineLen));
+                            concatByteArrays(oldBuffer, 0, oldLen, buffer, bufferPos, lineLen), lineReadPos);
                     setLineReadPos(lineReadPos + (oldBuffer.length + (i - bufferPos + 1)));
                     oldBuffer = new byte[0];
                     if (i + 1 < buffer.length) {
@@ -249,11 +254,118 @@ public class TailFile {
     private class LineResult {
         final boolean lineSepInclude;
         final byte[] line;
+        final long pos;
+        final String text;//just for debug
 
-        public LineResult(boolean lineSepInclude, byte[] line) {
+        public LineResult(boolean lineSepInclude, byte[] line, long pos) {
             super();
             this.lineSepInclude = lineSepInclude;
             this.line = line;
+            this.pos = pos;
+            this.text = new String(line);
         }
     }
+
+    private class LineBuffer {
+        private final List<byte[]> lines = new ArrayList<>();
+        private boolean addByteOffset;
+        private boolean backoffWithoutNL;
+        private final Pattern prefixPattern;
+        private long firstBytePos = -1;
+        private boolean partial = false;
+
+        public LineBuffer(String prefixRegex) {
+            if (prefixRegex != null) {
+                prefixPattern = Pattern.compile(prefixRegex);
+            } else {
+                prefixPattern = null;
+            }
+        }
+
+        public void setAddByteOffset(boolean addByteOffset) {
+            this.addByteOffset = addByteOffset;
+        }
+
+        public void setBackoffWithoutNL(boolean backoffWithoutNL) {
+            this.backoffWithoutNL = backoffWithoutNL;
+        }
+
+        public void reset() {
+            lines.clear();
+            firstBytePos = -1;
+            partial = false;
+        }
+
+        public Event append(LineResult lineResult) {
+            Event event = null;
+            if ((!partial && isNewRecord(lineResult))
+                    || (partial && !backoffWithoutNL && lineResult == null)) {
+                byte[] line = merge();
+                if (line != null) {
+                    event = EventBuilder.withBody(line);
+                    if (addByteOffset) {
+                        event.getHeaders().put(BYTE_OFFSET_HEADER_KEY, String.valueOf(firstBytePos));
+                    }
+                }
+                lines.clear();
+            }
+            appendInternal(lineResult);
+            return event;
+        }
+
+        private void appendInternal(LineResult lineResult) {
+            if (lineResult == null) {
+                return;
+            }
+            if (lines.isEmpty()) {
+                firstBytePos = lineResult.pos;
+            }
+            if (partial) {
+                int lastIndex = lines.size() - 1;
+                byte[] last = lines.get(lastIndex);
+                byte[] current = lineResult.line;
+                byte[] line = new byte[last.length + current.length];
+                System.arraycopy(last, 0, line, 0, last.length);
+                System.arraycopy(current, 0, line, last.length, current.length);
+                lines.set(lastIndex, line);
+            } else {
+                lines.add(lineResult.line);
+            }
+            partial = !lineResult.lineSepInclude;
+        }
+
+        private boolean isNewRecord(LineResult lineResult) {
+            if (lineResult == null || prefixPattern == null) {
+                return true;
+            }
+            String line = new String(lineResult.line);
+            Matcher matcher = prefixPattern.matcher(line);
+            return matcher.find();
+        }
+
+        private byte[] merge() {
+            if (lines.isEmpty()) {
+                return null;
+            }
+            byte[] line = lines.get(0);
+            if (lines.size() > 1) {
+                int len = lines.stream()
+                        .map(bytes -> bytes.length + 1)
+                        .reduce(0, Integer::sum) - 1;
+                line = new byte[len];
+                byte[] firstLine = lines.get(0);
+                System.arraycopy(firstLine, 0, line, 0, firstLine.length);
+                int index = firstLine.length;
+                for (int i = 1; i < lines.size(); i++) {
+                    line[index++] = BYTE_NL;
+                    byte[] currentLine = lines.get(i);
+                    System.arraycopy(currentLine, 0, line, index, currentLine.length);
+                    index += currentLine.length;
+                }
+            }
+            return line;
+        }
+
+    }
+
 }

@@ -67,4 +67,8 @@ public class TaildirSourceConfigurationConstants {
     /** The max number of batch reads from a file in one loop */
     public static final String MAX_BATCH_COUNT = "maxBatchCount";
     public static final Long DEFAULT_MAX_BATCH_COUNT = Long.MAX_VALUE;
+
+    /** The prefix regex of each record */
+    public static final String PREFIX_REGEX = "prefixRegex";
+    public static final String DEFAULT_PREFIX_REGEX = null;
 }
