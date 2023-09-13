@@ -63,7 +63,8 @@ public class TestTaildirEventReader {
 
     private ReliableTaildirEventReader getReader(
             Map<String, String> filePaths, Table<String, String, String> headerTable,
-            boolean addByteOffset, boolean cachedPatternMatching, String prefixRegex) {
+            boolean addByteOffset, boolean cachedPatternMatching,
+            String prefixRegex, int maxLineCount) {
         ReliableTaildirEventReader reader;
         try {
             reader = new ReliableTaildirEventReader.Builder()
@@ -74,6 +75,7 @@ public class TestTaildirEventReader {
                     .addByteOffset(addByteOffset)
                     .cachePatternMatching(cachedPatternMatching)
                     .prefixRegex(prefixRegex)
+                    .maxLineCount(maxLineCount)
                     .build();
             reader.updateTailFiles();
         } catch (IOException ioe) {
@@ -84,24 +86,29 @@ public class TestTaildirEventReader {
 
     private ReliableTaildirEventReader getReader(boolean addByteOffset,
                                                  boolean cachedPatternMatching,
-                                                 String prefixRegex) {
+                                                 String prefixRegex,
+                                                 int maxLineCount) {
         Map<String, String> filePaths = ImmutableMap.of("testFiles",
                 tmpDir.getAbsolutePath() + "/file.*");
         Table<String, String, String> headerTable = HashBasedTable.create();
-        return getReader(filePaths, headerTable, addByteOffset, cachedPatternMatching, prefixRegex);
+        return getReader(filePaths, headerTable, addByteOffset, cachedPatternMatching, prefixRegex, maxLineCount);
     }
 
     private ReliableTaildirEventReader getReader(boolean addByteOffset,
                                                  boolean cachedPatternMatching) {
-        return getReader(addByteOffset, cachedPatternMatching, null);
+        return getReader(addByteOffset, cachedPatternMatching, null, 50);
     }
 
     private ReliableTaildirEventReader getReader(String prefixRegex) {
-        return getReader(false, false, prefixRegex);
+        return getReader(false, false, prefixRegex, 50);
+    }
+
+    private ReliableTaildirEventReader getReader(String prefixRegex, int maxLineCount) {
+        return getReader(false, false, prefixRegex, maxLineCount);
     }
 
     private ReliableTaildirEventReader getReader() {
-        return getReader(false, false, null);
+        return getReader(false, false, null, 50);
     }
 
     @Before
@@ -370,6 +377,23 @@ public class TestTaildirEventReader {
         reader.commit();
         assertEquals(3, out.size());
         assertTrue(out.contains("[2022]file1line5"));
+    }
+
+    @Test
+    public void testMaxLineCount() throws IOException {
+        File f1 = new File(tmpDir, "file1");
+        Files.write("[2020]file1line1\n  line2\n  line3\n[2021]line4", f1, Charsets.UTF_8);
+
+        ReliableTaildirEventReader reader = getReader("\\[", 2);
+        List<String> out = Lists.newArrayList();
+        // Expect to read only the line with newline
+        for (TailFile tf : reader.getTailFiles().values()) {
+            out.addAll(bodiesAsStrings(reader.readEvents(tf, 5)));
+            reader.commit();
+        }
+        assertEquals(2, out.size());
+        assertTrue(out.contains("[2020]file1line1\n  line2"));
+        assertTrue(out.contains("  line3"));
     }
 
     @Test

@@ -71,4 +71,8 @@ public class TaildirSourceConfigurationConstants {
     /** The prefix regex of each record */
     public static final String PREFIX_REGEX = "prefixRegex";
     public static final String DEFAULT_PREFIX_REGEX = null;
+
+    /** The max line count of each record */
+    public static final String MAX_LINE_COUNT = "maxLineCount";
+    public static final int DEFAULT_MAX_LINE_COUNT = 50;
 }

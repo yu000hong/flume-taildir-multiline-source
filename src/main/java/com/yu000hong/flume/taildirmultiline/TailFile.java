@@ -58,12 +58,7 @@ public class TailFile {
     private long lineReadPos;
     private LineBuffer lineBuffer;
 
-    public TailFile(File file, Map<String, String> headers, long inode, long pos)
-            throws IOException {
-        this(file, headers, inode, pos, null);
-    }
-
-    public TailFile(File file, Map<String, String> headers, long inode, long pos, String prefixRegex)
+    public TailFile(File file, Map<String, String> headers, long inode, long pos, String prefixRegex, int maxLineCount)
             throws IOException {
         this.raf = new RandomAccessFile(file, "r");
         if (pos > 0) {
@@ -78,7 +73,7 @@ public class TailFile {
         this.headers = headers;
         this.oldBuffer = new byte[0];
         this.bufferPos = NEED_READING;
-        this.lineBuffer = new LineBuffer(prefixRegex);
+        this.lineBuffer = new LineBuffer(prefixRegex, maxLineCount);
     }
 
     public RandomAccessFile getRaf() {
@@ -271,15 +266,17 @@ public class TailFile {
         private boolean addByteOffset;
         private boolean backoffWithoutNL;
         private final Pattern prefixPattern;
+        private final int maxLineCount;
         private long firstBytePos = -1;
         private boolean partial = false;
 
-        public LineBuffer(String prefixRegex) {
+        public LineBuffer(String prefixRegex, int maxLineCount) {
             if (prefixRegex != null) {
                 prefixPattern = Pattern.compile(prefixRegex);
             } else {
                 prefixPattern = null;
             }
+            this.maxLineCount = maxLineCount;
         }
 
         public void setAddByteOffset(boolean addByteOffset) {
@@ -335,7 +332,9 @@ public class TailFile {
         }
 
         private boolean isNewRecord(LineResult lineResult) {
-            if (lineResult == null || prefixPattern == null) {
+            if (lineResult == null
+                    || prefixPattern == null
+                    || lines.size() >= maxLineCount) {
                 return true;
             }
             String line = new String(lineResult.line);

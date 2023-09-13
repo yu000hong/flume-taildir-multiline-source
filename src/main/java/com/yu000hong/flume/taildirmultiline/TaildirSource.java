@@ -77,6 +77,7 @@ public class TaildirSource extends AbstractSource implements
     private String fileHeaderKey;
     private Long maxBatchCount;
     private String prefixRegex;
+    private int maxLineCount;
 
     @Override
     public synchronized void start() {
@@ -92,6 +93,7 @@ public class TaildirSource extends AbstractSource implements
                     .annotateFileName(fileHeader)
                     .fileNameHeader(fileHeaderKey)
                     .prefixRegex(prefixRegex)
+                    .maxLineCount(maxLineCount)
                     .build();
         } catch (IOException e) {
             throw new FlumeException("Error instantiating ReliableTaildirEventReader", e);
@@ -183,16 +185,10 @@ public class TaildirSource extends AbstractSource implements
                     + "default maxBatchCount of {}", maxBatchCount);
         }
         prefixRegex = context.getString(PREFIX_REGEX, DEFAULT_PREFIX_REGEX);
-        if (prefixRegex != null) {
-            if (StringUtils.isBlank(prefixRegex)) {
-                prefixRegex = null;
-            } else {
-                prefixRegex = prefixRegex.trim();
-                if (!prefixRegex.startsWith("^")) {
-                    prefixRegex = "^" + prefixRegex;
-                }
-            }
+        if (StringUtils.isBlank(prefixRegex)) {
+            prefixRegex = null;
         }
+        maxLineCount = context.getInteger(MAX_LINE_COUNT, DEFAULT_MAX_LINE_COUNT);
 
         if (sourceCounter == null) {
             sourceCounter = new SourceCounter(getName());

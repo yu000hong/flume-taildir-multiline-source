@@ -63,14 +63,16 @@ public class ReliableTaildirEventReader implements ReliableEventReader {
     private final boolean annotateFileName;
     private final String fileNameHeader;
     private final String prefixRegex;
+    private final int maxLineCount;
 
     /**
      * Create a ReliableTaildirEventReader to watch the given directory.
      */
-    private ReliableTaildirEventReader(Map<String, String> filePaths,
-            Table<String, String, String> headerTable, String positionFilePath,
-            boolean skipToEnd, boolean addByteOffset, boolean cachePatternMatching,
-            boolean annotateFileName, String fileNameHeader, String prefixRegex) throws IOException {
+    private ReliableTaildirEventReader(
+            Map<String, String> filePaths, Table<String, String, String> headerTable,
+            String positionFilePath, boolean skipToEnd, boolean addByteOffset,
+            boolean cachePatternMatching, boolean annotateFileName,
+            String fileNameHeader, String prefixRegex, int maxLineCount) throws IOException {
         // Sanity checks
         Preconditions.checkNotNull(filePaths);
         Preconditions.checkNotNull(positionFilePath);
@@ -94,6 +96,7 @@ public class ReliableTaildirEventReader implements ReliableEventReader {
         this.annotateFileName = annotateFileName;
         this.fileNameHeader = fileNameHeader;
         this.prefixRegex = prefixRegex;
+        this.maxLineCount = maxLineCount;
         updateTailFiles(skipToEnd);
 
         logger.info("Updating position from position file: " + positionFilePath);
@@ -292,7 +295,7 @@ public class ReliableTaildirEventReader implements ReliableEventReader {
     private TailFile openFile(File file, Map<String, String> headers, long inode, long pos) {
         try {
             logger.info("Opening file: " + file + ", inode: " + inode + ", pos: " + pos);
-            return new TailFile(file, headers, inode, pos, prefixRegex);
+            return new TailFile(file, headers, inode, pos, prefixRegex, maxLineCount);
         } catch (IOException e) {
             throw new FlumeException("Failed opening file: " + file, e);
         }
@@ -311,6 +314,7 @@ public class ReliableTaildirEventReader implements ReliableEventReader {
         private Boolean annotateFileName = DEFAULT_FILE_HEADER;
         private String fileNameHeader = DEFAULT_FILENAME_HEADER_KEY;
         private String prefixRegex = DEFAULT_PREFIX_REGEX;
+        private int maxLineCount = DEFAULT_MAX_LINE_COUNT;
 
         public Builder filePaths(Map<String, String> filePaths) {
             this.filePaths = filePaths;
@@ -357,11 +361,16 @@ public class ReliableTaildirEventReader implements ReliableEventReader {
             return this;
         }
 
+        public Builder maxLineCount(int maxLineCount) {
+            this.maxLineCount = maxLineCount;
+            return this;
+        }
+
         public ReliableTaildirEventReader build() throws IOException {
             return new ReliableTaildirEventReader(
                     filePaths, headerTable, positionFilePath,
                     skipToEnd, addByteOffset, cachePatternMatching,
-                    annotateFileName, fileNameHeader, prefixRegex);
+                    annotateFileName, fileNameHeader, prefixRegex, maxLineCount);
         }
     }
 
