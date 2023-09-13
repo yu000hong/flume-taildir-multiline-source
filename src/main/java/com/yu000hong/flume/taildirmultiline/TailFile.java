@@ -165,6 +165,9 @@ public class TailFile {
             line = readLine();
             event = lineBuffer.append(line);
         } while (event == null && line != null);
+        if (event != null) {
+            logger.debug("Line: {}", new String(event.getBody()));
+        }
         return event;
     }
 
@@ -271,6 +274,7 @@ public class TailFile {
         private boolean partial = false;
 
         public LineBuffer(String prefixRegex, int maxLineCount) {
+            logger.debug("PrefixRegex: {}", prefixRegex);
             if (prefixRegex != null) {
                 prefixPattern = Pattern.compile(prefixRegex);
             } else {
